@@ -9,8 +9,8 @@ kind: ClusterRole
 metadata:
   name: services-watcher
 rules:
-- apiGroups: [""]
-  resources: ["services"]
+- apiGroups: ["", "apps"]
+  resources: ["services", "statefulsets"]
   verbs: ["watch","list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

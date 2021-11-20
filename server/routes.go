@@ -61,7 +61,7 @@ func routesCreateHandler(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	Routes.CreateMapping(definition.ServerAddress, definition.Backend)
+	Routes.CreateMapping(definition.ServerAddress, definition.Backend, func() {})
 	writer.WriteHeader(http.StatusCreated)
 }
 
@@ -91,7 +91,7 @@ type IRoutes interface {
 	FindBackendForServerAddress(serverAddress string) (string, string)
 	GetMappings() map[string]string
 	DeleteMapping(serverAddress string) bool
-	CreateMapping(serverAddress string, backend string)
+	CreateMapping(serverAddress string, backend string, waker func())
 	SetDefaultRoute(backend string)
 }
 
@@ -111,12 +111,13 @@ func (r *routesImpl) RegisterAll(mappings map[string]string) {
 
 	r.mappings = make(map[string]mapping)
 	for k, v := range mappings {
-		r.mappings[k] = mapping{backend: v}
+		r.mappings[k] = mapping{backend: v, waker: func() {}}
 	}
 }
 
 type mapping struct {
 	backend string
+	waker   func()
 }
 
 type routesImpl struct {
@@ -143,6 +144,7 @@ func (r *routesImpl) FindBackendForServerAddress(serverAddress string) (string, 
 
 	if r.mappings != nil {
 		if mapping, exists := r.mappings[address]; exists {
+			mapping.waker()
 			return mapping.backend, address
 		}
 	}
@@ -173,7 +175,7 @@ func (r *routesImpl) DeleteMapping(serverAddress string) bool {
 	}
 }
 
-func (r *routesImpl) CreateMapping(serverAddress string, backend string) {
+func (r *routesImpl) CreateMapping(serverAddress string, backend string, waker func()) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -183,5 +185,5 @@ func (r *routesImpl) CreateMapping(serverAddress string, backend string) {
 		"serverAddress": serverAddress,
 		"backend":       backend,
 	}).Info("Creating route")
-	r.mappings[serverAddress] = mapping{backend: backend}
+	r.mappings[serverAddress] = mapping{backend: backend, waker: waker}
 }

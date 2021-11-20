@@ -1,8 +1,9 @@
 package server
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_routesImpl_FindBackendForServerAddress(t *testing.T) {
@@ -44,7 +45,7 @@ func Test_routesImpl_FindBackendForServerAddress(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := NewRoutes()
 
-			r.CreateMapping(tt.mapping.serverAddress, tt.mapping.backend)
+			r.CreateMapping(tt.mapping.serverAddress, tt.mapping.backend, func() {})
 
 			if got, server := r.FindBackendForServerAddress(tt.args.serverAddress); got != tt.want {
 				t.Errorf("routesImpl.FindBackendForServerAddress() = %v, want %v", got, tt.want)
