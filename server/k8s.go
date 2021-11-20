@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net"
 	"strconv"
 	"sync"
@@ -8,7 +9,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	apps "k8s.io/api/apps/v1"
+	autoscaling "k8s.io/api/autoscaling/v1"
 	core "k8s.io/api/core/v1"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -18,7 +21,7 @@ import (
 
 const (
 	AnnotationExternalServerName = "mc-router.itzg.me/externalServerName"
-	AnnotationDefaultServer      = "mc-router.itzg.me/defaultServer"
+	AnnotationDefaultServer      = "mc-router.itzg.meN/defaultServer"
 )
 
 type IK8sWatcher interface {
@@ -31,8 +34,12 @@ var K8sWatcher IK8sWatcher = &k8sWatcherImpl{}
 
 type k8sWatcherImpl struct {
 	sync.RWMutex
+	// TODO documentation
+	// TODO change from *apps.StatefulSet to string (name of the StatefulSet)
 	mappings map[string]*apps.StatefulSet
-	stop     chan struct{}
+
+	clientset *kubernetes.Clientset
+	stop      chan struct{}
 }
 
 func (w *k8sWatcherImpl) StartInCluster() error {
@@ -58,6 +65,7 @@ func (w *k8sWatcherImpl) startWithLoadedConfig(config *rest.Config) error {
 	if err != nil {
 		return errors.Wrap(err, "Could not create kube clientset")
 	}
+	w.clientset = clientset
 
 	_, serviceController := cache.NewInformer(
 		cache.NewListWatchFromClient(
@@ -176,7 +184,7 @@ func (w *k8sWatcherImpl) Stop() {
 type routableService struct {
 	externalServiceName string
 	containerEndpoint   string
-	autoScaleUp         func()
+	autoScaleUp         func(ctx context.Context) error
 }
 
 func (w *k8sWatcherImpl) extractRoutableService(obj interface{}) *routableService {
@@ -210,10 +218,11 @@ func (w *k8sWatcherImpl) buildDetails(service *core.Service, externalServiceName
 	return rs
 }
 
-func (w *k8sWatcherImpl) buildScaleUpFunction(service *core.Service) func() {
-	return func() {
+func (w *k8sWatcherImpl) buildScaleUpFunction(service *core.Service) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
 		serviceName := service.Name
 		if statefulSet, exists := w.mappings[serviceName]; exists {
+			// TODO this is wrong, we need to read the current nubmer of replicas
 			replicas := *statefulSet.Spec.Replicas
 			logrus.WithFields(logrus.Fields{
 				"service":     serviceName,
@@ -221,8 +230,18 @@ func (w *k8sWatcherImpl) buildScaleUpFunction(service *core.Service) func() {
 				"replicas":    replicas,
 			}).Info("StatefulSet of Service Replicas")
 			if replicas == 0 {
-				// TODO scale up the StatefulSet by setting replicas = 1...
+				if _, err := w.clientset.AppsV1().StatefulSets(service.Namespace).UpdateScale(ctx, statefulSet.Name, &autoscaling.Scale{
+					ObjectMeta: meta.ObjectMeta{
+						Name:            statefulSet.Name,
+						Namespace:       statefulSet.Namespace,
+						UID:             statefulSet.UID,
+						ResourceVersion: statefulSet.ResourceVersion,
+					},
+					Spec: autoscaling.ScaleSpec{Replicas: 1}}, meta.UpdateOptions{}); err != nil {
+					return errors.Wrap(err, "UpdateScale for Replicas=1 failed for StatefulSet: "+statefulSet.Name)
+				}
 			}
 		}
+		return nil
 	}
 }
